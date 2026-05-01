@@ -1,222 +1,168 @@
-# Quick Start Guide
-
-**Feature**: Esports Tournament Platform  
-**Last Updated**: 2026-04-30
+# Quickstart: Esports Tournament Management Platform
 
 ## Prerequisites
 
-- .NET 10 SDK
-- Node.js 18+ (for Angular 21)
-- SQL Server (LocalDB or full instance)
-- Visual Studio 2022 / VS Code / Rider
-- Git
+| Tool | Version |
+|------|---------|
+| .NET SDK | 10.x |
+| Node.js | 20+ |
+| npm | 10+ |
+| Docker Desktop | Any recent version |
+| Git | Any |
 
-## Initial Setup
+---
 
-### 1. Clone Repository
+## 1. Clone the Repository
 
 ```bash
-git clone https://github.com/JuanIgnacioFoti/proyecto-ia.git
-cd proyecto-ia
-git checkout develop
+git clone <repo-url>
+cd esports-230548-250602-318798/esportsApp
 ```
 
-### 2. Backend Setup
+---
+
+## 2. Configure Environment Variables
+
+Copy the example environment file for the backend:
+
+```bash
+cp backend/EsportsApp.API/.env.example backend/EsportsApp.API/.env
+```
+
+Edit `backend/EsportsApp.API/.env` and set the following values:
+
+```env
+CONNECTION_STRING=Server=localhost,1433;Database=EsportsDb;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True
+JWT_SECRET=<minimum-32-character-random-string>
+JWT_ISSUER=EsportsApp
+JWT_AUDIENCE=EsportsApp
+ADMIN_EMAIL=admin@esports.local
+ADMIN_PASSWORD=Admin@1234
+```
+
+> **Security note**: Never commit `.env` files. The `.gitignore` must exclude them. All credentials must come from environment variables — never hardcoded.
+
+---
+
+## 3. Start SQL Server via Docker
+
+```bash
+docker run \
+  -e "ACCEPT_EULA=Y" \
+  -e "SA_PASSWORD=YourStrong@Passw0rd" \
+  -p 1433:1433 \
+  --name esports-sql \
+  -d mcr.microsoft.com/mssql/server:2022-latest
+```
+
+Wait ~10 seconds for SQL Server to initialize before running migrations.
+
+---
+
+## 4. Apply Database Migrations
+
+From the `backend/` directory:
 
 ```bash
 cd backend
-dotnet restore
-dotnet ef database update --project EsportsPlatform.API
-dotnet run --project EsportsPlatform.API
+dotnet ef database update --project EsportsApp.Infrastructure --startup-project EsportsApp.API
 ```
 
-Backend runs on `https://localhost:5001` (or configured port).
+This command:
+- Creates the `EsportsDb` database.
+- Applies all EF Core migrations.
+- Seeds the Videogame catalog (League of Legends, Valorant, CS2, Dota 2, Rocket League).
+- Creates the default Admin account using `ADMIN_EMAIL` and `ADMIN_PASSWORD` from the environment.
 
-### 3. Frontend Setup
+---
+
+## 5. Start the Backend API
+
+```bash
+cd backend
+dotnet run --project EsportsApp.API
+```
+
+| Endpoint | URL |
+|----------|-----|
+| API (HTTPS) | `https://localhost:5001` |
+| API (HTTP) | `http://localhost:5000` |
+| Swagger UI | `https://localhost:5001/swagger` |
+| SignalR Hub | `https://localhost:5001/hubs/tournament` |
+
+---
+
+## 6. Start the Angular Frontend
+
+In a separate terminal:
 
 ```bash
 cd frontend
 npm install
-ng serve
+npm start
 ```
 
-Frontend runs on `http://localhost:4200`.
+Angular dev server: `http://localhost:4200`
 
-### 4. Run Tests
+---
 
-```bash
-cd backend/EsportsPlatform.Tests
-dotnet test
-```
+## 7. Run Unit Tests
 
-## Project Structure
-
-```
-backend/
-├── EsportsPlatform.API/           # ASP.NET Core Web API
-├── EsportsPlatform.Application/   # Services (business logic)
-├── EsportsPlatform.Domain/        # Entities + interfaces
-├── EsportsPlatform.Infrastructure/ # EF Core + repositories
-└── EsportsPlatform.Tests/         # MSTest unit tests
-
-frontend/
-└── src/app/
-    ├── features/                   # Feature modules
-    ├── core/                       # Singletons (auth, interceptors)
-    └── shared/                     # Reusable components
-
-specs/001-esports-tournament-platform/
-├── spec.md                         # Requirements
-├── plan.md                         # This implementation plan
-├── research.md                     # Technical decisions
-├── data-model.md                   # Database schema
-└── contracts/                      # API contracts
-```
-
-## Development Workflow
-
-### 1. Create Feature Branch
-
-```bash
-git checkout develop
-git pull origin develop
-git checkout -b feature/tournament-creation
-```
-
-### 2. Implement Feature
-
-Follow Clean Architecture:
-1. Define entities in `Domain/`
-2. Create repository interface in `Domain/Interfaces/`
-3. Implement repository in `Infrastructure/`
-4. Create service in `Application/Services/`
-5. Add controller in `API/Controllers/`
-6. Write unit tests in `Tests/`
-
-### 3. Run Locally
-
-Terminal 1 (Backend):
-```bash
-cd backend/EsportsPlatform.API
-dotnet watch run
-```
-
-Terminal 2 (Frontend):
-```bash
-cd frontend
-ng serve
-```
-
-Terminal 3 (Tests):
-```bash
-cd backend/EsportsPlatform.Tests
-dotnet watch test
-```
-
-### 4. Commit & Push
-
-```bash
-git add .
-git commit -m "feat(tournaments): add tournament creation endpoint"
-git push origin feature/tournament-creation
-```
-
-### 5. Create Pull Request
-
-Open PR from feature branch to `develop` on GitHub.
-
-## Testing
-
-### Unit Tests (Backend)
-
-```bash
-cd backend/EsportsPlatform.Tests
-dotnet test --logger "console;verbosity=detailed"
-```
-
-Required coverage:
-- Tournament creation (TournamentServiceTests)
-- Match results (MatchServiceTests)
-- Player registration (PlayerServiceTests)
-- Team enrollment (EnrollmentServiceTests)
-
-### Manual Test Cases
-
-Documented in `docs/documento-3-testing.md`. Execute locally:
-1. Register organizer → Create tournament → Enroll teams
-2. Register players → Form team → Enroll in tournament
-3. Register match results → Verify standings
-
-## Common Commands
-
-### Database Migrations
-
-Create migration:
 ```bash
 cd backend
-dotnet ef migrations add MigrationName --project EsportsPlatform.Infrastructure --startup-project EsportsPlatform.API
+dotnet test EsportsApp.Tests
 ```
 
-Apply migration:
+Test output will report coverage for TR-001 through TR-004.
+
+---
+
+## Docker Compose (All-in-One)
+
+Alternatively, bring up all services with one command from the project root:
+
 ```bash
-dotnet ef database update --project EsportsPlatform.Infrastructure --startup-project EsportsPlatform.API
+docker-compose up --build
 ```
 
-Reset database:
+This starts:
+1. SQL Server (port 1433)
+2. Backend API (port 5001)
+3. Angular frontend (port 4200)
+
+Stop all services:
+
 ```bash
-dotnet ef database drop --project EsportsPlatform.Infrastructure --startup-project EsportsPlatform.API
-dotnet ef database update --project EsportsPlatform.Infrastructure --startup-project EsportsPlatform.API
+docker-compose down
 ```
 
-### Angular Commands
+---
 
-Generate component:
-```bash
-cd frontend
-ng generate component features/tournaments/tournament-list
-```
+## Seeded Data After First Migration
 
-Generate service:
-```bash
-ng generate service features/tournaments/tournament
-```
+| Data | Details |
+|------|---------|
+| Videogames | League of Legends, Valorant, CS2, Dota 2, Rocket League |
+| Admin account | Email: `ADMIN_EMAIL` env var; Password: `ADMIN_PASSWORD` env var |
 
-Build for production:
-```bash
-ng build --configuration production
-```
+---
 
-## Troubleshooting
+## Default Service Ports
 
-### Backend won't start
-- Check SQL Server is running
-- Verify connection string in `appsettings.json`
-- Run `dotnet ef database update`
+| Service | Port |
+|---------|------|
+| Angular dev server | 4200 |
+| ASP.NET Core API (HTTPS) | 5001 |
+| ASP.NET Core API (HTTP) | 5000 |
+| SQL Server | 1433 |
+| SignalR Hub path | `/hubs/tournament` (same host as API) |
 
-### Frontend won't compile
-- Delete `node_modules/` and run `npm install`
-- Check Node version: `node --version` (should be 18+)
-- Clear Angular cache: `ng cache clean`
+---
 
-### Tests failing
-- Check database is in known state (rerun migrations)
-- Verify mocks are configured correctly
-- Run single test: `dotnet test --filter FullyQualifiedName~TestMethodName`
+## Verifying the Setup
 
-## Key Files
-
-- **Constitution**: `.specify/memory/constitution.md`
-- **Spec**: `specs/001-esports-tournament-platform/spec.md`
-- **API Contracts**: `specs/001-esports-tournament-platform/contracts/api-endpoints.md`
-- **Data Model**: `specs/001-esports-tournament-platform/data-model.md`
-- **Copilot Instructions**: `.github/copilot-instructions.md`
-
-## Next Steps
-
-1. Review specification: `specs/001-esports-tournament-platform/spec.md`
-2. Understand data model: `specs/001-esports-tournament-platform/data-model.md`
-3. Implement P1 user stories first (organizer registration, tournament creation)
-4. Use `/speckit.tasks` to break down work
-5. Use `/speckit.implement` to execute tasks
-
-**Ready to code!** 🚀
+1. Open `https://localhost:5001/swagger` — Swagger UI should load with all API endpoints listed.
+2. Open `http://localhost:4200` — Angular app home page should load.
+3. Register a Player account via the UI or Swagger.
+4. Log in and verify a JWT token is returned.
+5. Connect to the SignalR hub at `https://localhost:5001/hubs/tournament` to verify the WebSocket handshake.

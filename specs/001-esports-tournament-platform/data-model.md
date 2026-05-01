@@ -1,415 +1,310 @@
-# Data Model
+# Data Model: Esports Tournament Management Platform
 
-**Feature**: Esports Tournament Platform  
-**Date**: 2026-04-30  
-**Database**: SQL Server with Entity Framework Core Code-First
+**Phase**: 1 | **Date**: 2026-04-20 | **Spec**: [spec.md](spec.md)
+
+---
 
 ## Entity Relationship Overview
 
 ```
-User (abstract)
-├── Organizer (owns) → Tournament (contains) → Match
-├── Player (captains/belongs to) → Team (enrolls in) → Tournament
-└── Player (receives) → TeamInvitation (from) → Team
+Videogame ──────────────────────────< Tournament (videogameId)
+                                      Tournament ──< TournamentRegistration (tournamentId)
+                                      Tournament ──< Match (tournamentId)
+                                      Tournament ──< Standing (tournamentId)
+                                      Tournament ──1 ScoringSystem
 
-Tournament → ScoringSystemType (enum, determines strategy)
-Match → Team (home/away) → Player (members)
-Standings (calculated view) ← Match (results)
+User ──< Player (userId)
+         Player ──< Team (captainId)
+         Player ──< TeamMember (playerId)
+         Player ──< TeamInvitation (invitedPlayerId)
+
+User ──< Organizer (userId)
+         Organizer ──< Tournament (organizerId)
+
+Team ──< TeamMember (teamId)
+Team ──< TeamInvitation (teamId)
+Team ──< TournamentRegistration (teamId)
+Team ──< Match as HomeTeam (homeTeamId)
+Team ──< Match as AwayTeam (awayTeamId)
+Team ──< Standing (teamId)
 ```
-
-## Core Entities
-
-### User (Base Class - TPH Strategy)
-
-**Purpose**: Base authentication entity for all platform users.
-
-**Attributes**:
-- `Id` (Guid, PK): Unique identifier
-- `Email` (string, unique, indexed): Authentication identifier
-- `PasswordHash` (string): BCrypt/PBKDF2 hashed password
-- `Role` (UserRole enum): Organizer | Player
-- `CreatedAt` (DateTime): Account creation timestamp
-- `UpdatedAt` (DateTime, nullable): Last modification timestamp
-
-**Validation Rules**:
-- Email: unique, valid format, max 255 chars
-- Password: 8+ chars, 1 uppercase, 1 lowercase, 1 number (validated before hashing)
-
-**Relationships**:
-- One-to-One with Organizer or Player (discriminator pattern)
-
-**Indexes**:
-- Unique index on Email
-- Index on Role for filtered queries
 
 ---
 
-### Organizer (Inherits User)
+## Entities
 
-**Purpose**: Users who create and manage tournaments.
+### User
 
-**Attributes**:
-- `OrganizationName` (string, unique, indexed): Display name (3-60 chars)
+| Field | Type | Constraints |
+|-------|------|-------------|
+| Id | `Guid` | PK |
+| Email | `string` | UNIQUE, NOT NULL, valid email format |
+| PasswordHash | `string` | NOT NULL (BCrypt) |
+| Role | `UserRole` | NOT NULL |
+| CreatedAt | `DateTime` | NOT NULL, UTC |
+| IsActive | `bool` | NOT NULL, default `true`; `false` = suspended |
 
-**Validation Rules**:
-- OrganizationName: unique, 3-60 chars, non-empty
-
-**Relationships**:
-- One-to-Many with Tournament (owns tournaments)
-
-**Indexes**:
-- Unique index on OrganizationName
-
----
-
-### Player (Inherits User)
-
-**Purpose**: Users who form teams and participate in tournaments.
-
-**Attributes**:
-- `Username` (string, unique, indexed): Display name
-- `RealName` (string): Full legal name
-- `MainGame` (string): Primary videogame
-
-**Validation Rules**:
-- Username: unique, non-empty, max 50 chars
-- RealName: non-empty, max 100 chars
-- MainGame: non-empty, max 50 chars
-
-**Relationships**:
-- One-to-Many with Team (as captain via CaptainId FK)
-- Many-to-Many with Team (as member via TeamPlayer join table)
-- One-to-Many with TeamInvitation (received invitations)
-
-**Indexes**:
-- Unique index on Username
-- Index on MainGame for filtering
+**Notes**: `Role` encodes the top-level registration type (Player / Organizer / Admin). Team Captain status is derived from `Team.CaptainId`; it is not a column on `User`.
 
 ---
 
-### Tournament
+### Player
 
-**Purpose**: Represents an esports competition event.
+| Field | Type | Constraints |
+|-------|------|-------------|
+| Id | `Guid` | PK, FK → `User.Id` (1:1) |
+| Username | `string` | UNIQUE, NOT NULL, **immutable after creation** |
+| RealName | `string` | NOT NULL, updatable |
+| MainVideogameId | `Guid` | FK → `Videogame.Id`, NOT NULL, **immutable after creation** |
 
-**Attributes**:
-- `Id` (Guid, PK): Unique identifier
-- `Name` (string): Tournament name (max 100 chars)
-- `Game` (string): Videogame (max 50 chars, e.g., "League of Legends")
-- `Description` (string, nullable): Tournament details (max 500 chars)
-- `StartDate` (DateTime): Competition start (must be future at creation)
-- `EndDate` (DateTime): Estimated completion (must be after StartDate)
-- `MaxTeams` (int): Maximum participant teams (min 2)
-- `MinPlayersPerTeam` (int): Minimum team size requirement (default 5)
-- `ScoringSystemType` (ScoringSystemType enum): Standard | WTA | Custom
-- `CustomWinPoints` (int, nullable): Points for win if Custom (default null)
-- `CustomDrawPoints` (int, nullable): Points for draw if Custom (default null)
-- `CustomLossPoints` (int, nullable): Points for loss if Custom (default null)
-- `State` (TournamentState enum): Draft | Open | InProgress | Finished
-- `OrganizerId` (Guid, FK): Owner organizer
-- `CreatedAt` (DateTime): Creation timestamp
-- `UpdatedAt` (DateTime, nullable): Last modification
+---
 
-**Validation Rules**:
-- Name: non-empty, max 100 chars
-- Game: non-empty, max 50 chars
-- StartDate: must be > DateTime.UtcNow at creation
-- EndDate: must be > StartDate
-- MaxTeams: >= 2
-- MinPlayersPerTeam: >= 1, default 5
-- CustomPoints: required if ScoringSystemType == Custom
-- State transitions: unidirectional (Draft → Open → InProgress → Finished)
-- ScoringSystemType: immutable after State == InProgress
+### Organizer
 
-**Relationships**:
-- Many-to-One with Organizer (owned by organizer)
-- Many-to-Many with Team (via TournamentEnrollment join table)
-- One-to-Many with Match (tournament matches)
+| Field | Type | Constraints |
+|-------|------|-------------|
+| Id | `Guid` | PK, FK → `User.Id` (1:1) |
+| OrganizationName | `string` | UNIQUE, NOT NULL, 3–60 characters, updatable |
 
-**Indexes**:
-- Index on OrganizerId (filter by organizer)
-- Index on State (filter by state)
-- Index on Game (filter by game)
-- Composite index on (State, Game) for common query
+---
 
-**State Machine**:
-```
-Draft → Open → InProgress → Finished
-  ↓      ↓          ↓
-  └──────┴──────────┘  (can skip states but never go backward)
-```
+### Videogame
+
+| Field | Type | Constraints |
+|-------|------|-------------|
+| Id | `Guid` | PK |
+| Name | `string` | UNIQUE, NOT NULL |
+
+**Notes**: Seeded at startup; **immutable at runtime** — no API endpoint to add/edit/remove.
+
+Seed list (configurable in migration):
+- League of Legends
+- Valorant
+- CS2
+- Dota 2
+- Rocket League
 
 ---
 
 ### Team
 
-**Purpose**: Group of players competing together in a specific game.
+| Field | Type | Constraints |
+|-------|------|-------------|
+| Id | `Guid` | PK |
+| Name | `string` | NOT NULL, unique within `VideogameId` |
+| Description | `string?` | nullable |
+| VideogameId | `Guid` | FK → `Videogame.Id`, NOT NULL |
+| CaptainId | `Guid` | FK → `Player.Id`, NOT NULL |
+| CreatedAt | `DateTime` | NOT NULL, UTC |
 
-**Attributes**:
-- `Id` (Guid, PK): Unique identifier
-- `Name` (string): Team name (max 60 chars)
-- `Description` (string, nullable): Team details (max 300 chars)
-- `Game` (string): Videogame (max 50 chars)
-- `CaptainId` (Guid, FK): Team captain (must be a member)
-- `CreatedAt` (DateTime): Team formation timestamp
+**DB Constraints**:
+- `UNIQUE(Name, VideogameId)`
 
-**Validation Rules**:
-- Name: unique within same Game, non-empty, max 60 chars
-- Game: non-empty, max 50 chars
-- Captain: must be a Player, one captain per team per game
-
-**Relationships**:
-- Many-to-One with Player (captain relationship via CaptainId)
-- Many-to-Many with Player (members via TeamPlayer join table)
-- Many-to-Many with Tournament (via TournamentEnrollment join table)
-- One-to-Many with TeamInvitation (sent invitations)
-
-**Indexes**:
-- Unique composite index on (Name, Game)
-- Index on CaptainId
-- Index on Game
-
-**Business Rules**:
-- Captain must be a member of the team
-- A player can captain only one team per game
-- A player can belong to only one active team per game
+**Service-Layer Constraints**:
+- A `Player` cannot be Captain of more than one team per `VideogameId` (FR-016).
+- `CaptainId` must correspond to an active `TeamMember` row at all times.
 
 ---
 
-### TeamPlayer (Join Table)
+### TeamMember
 
-**Purpose**: Many-to-many relationship between Team and Player (team members).
+| Field | Type | Constraints |
+|-------|------|-------------|
+| Id | `Guid` | PK |
+| TeamId | `Guid` | FK → `Team.Id`, NOT NULL |
+| PlayerId | `Guid` | FK → `Player.Id`, NOT NULL |
+| JoinedAt | `DateTime` | NOT NULL, UTC |
 
-**Attributes**:
-- `TeamId` (Guid, FK): Team identifier
-- `PlayerId` (Guid, FK): Player identifier
-- `JoinedAt` (DateTime): Membership start timestamp
+**DB Constraints**:
+- `UNIQUE(TeamId, PlayerId)`
 
-**Validation Rules**:
-- Composite PK (TeamId, PlayerId) prevents duplicates
-- Player can be in only one active team per game (enforced by business logic)
-
-**Indexes**:
-- Composite PK on (TeamId, PlayerId)
-- Index on PlayerId for reverse lookup
+**Service-Layer Constraints**:
+- A `Player` may appear in at most one active `TeamMember` row per `Videogame` (FR-019).
 
 ---
 
 ### TeamInvitation
 
-**Purpose**: Tracks invitations sent to players to join teams.
+| Field | Type | Constraints |
+|-------|------|-------------|
+| Id | `Guid` | PK |
+| TeamId | `Guid` | FK → `Team.Id`, NOT NULL |
+| InvitedPlayerId | `Guid` | FK → `Player.Id`, NOT NULL |
+| Status | `InvitationStatus` | NOT NULL, default `Pending` |
+| CreatedAt | `DateTime` | NOT NULL, UTC |
 
-**Attributes**:
-- `Id` (Guid, PK): Unique identifier
-- `TeamId` (Guid, FK): Inviting team
-- `InvitedPlayerId` (Guid, FK): Player being invited
-- `Status` (InvitationStatus enum): Pending | Accepted | Rejected
-- `CreatedAt` (DateTime): Invitation sent timestamp
-- `RespondedAt` (DateTime, nullable): Acceptance/rejection timestamp
-
-**Validation Rules**:
-- Status: defaults to Pending
-- Player cannot have multiple Pending invitations from same team
-- Once Accepted/Rejected, immutable
-
-**Relationships**:
-- Many-to-One with Team (invitations from team)
-- Many-to-One with Player (invitations to player)
-
-**Indexes**:
-- Index on TeamId
-- Index on InvitedPlayerId
-- Composite index on (InvitedPlayerId, Status) for fetching pending invitations
-- Unique composite index on (TeamId, InvitedPlayerId, Status) when Status = Pending (prevents duplicate pending)
+**Expiry rule**: When `Status = Pending` and `CreatedAt + 7 days < UtcNow`, the invitation is treated as `Expired` at evaluation time (lazy — no background job required).
 
 ---
 
-### TournamentEnrollment (Join Table)
+### Tournament
 
-**Purpose**: Many-to-many relationship between Tournament and Team.
+| Field | Type | Constraints |
+|-------|------|-------------|
+| Id | `Guid` | PK |
+| Name | `string` | NOT NULL |
+| Description | `string?` | nullable |
+| VideogameId | `Guid` | FK → `Videogame.Id`, NOT NULL |
+| OrganizerId | `Guid` | FK → `Organizer.Id`, NOT NULL |
+| StartDate | `DateTime` | NOT NULL, must be > `UtcNow` at creation time |
+| EstimatedEndDate | `DateTime` | NOT NULL, must be > `StartDate` |
+| MaxTeams | `int` | NOT NULL, ≥ 2 |
+| MinMembersPerTeam | `int` | NOT NULL, ≥ 1, default `5` |
+| Status | `TournamentStatus` | NOT NULL, default `Draft` |
+| PreSuspensionStatus | `TournamentStatus?` | nullable — stores pre-`Suspended` state for reinstatement |
+| CreatedAt | `DateTime` | NOT NULL, UTC |
 
-**Attributes**:
-- `TournamentId` (Guid, FK): Tournament identifier
-- `TeamId` (Guid, FK): Enrolled team identifier
-- `EnrolledAt` (DateTime): Enrollment timestamp
+---
 
-**Validation Rules**:
-- Composite PK (TournamentId, TeamId) prevents duplicates
-- Team game must match Tournament game
-- Team must have >= Tournament.MinPlayersPerTeam
-- Tournament must have < Tournament.MaxTeams enrolled
-- Tournament.State must be Open
+### ScoringSystem
 
-**Indexes**:
-- Composite PK on (TournamentId, TeamId)
-- Index on TeamId for reverse lookup
+| Field | Type | Constraints |
+|-------|------|-------------|
+| Id | `Guid` | PK |
+| TournamentId | `Guid` | FK → `Tournament.Id`, NOT NULL, **UNIQUE** (1:1) |
+| Type | `ScoringSystemType` | NOT NULL |
+| WinPoints | `int` | NOT NULL, ≥ 0 |
+| DrawPoints | `int` | NOT NULL, ≥ 0 |
+| LossPoints | `int` | NOT NULL, ≥ 0 |
+
+**Validation** (service layer, enforced at creation):
+- `WinPoints ≥ DrawPoints ≥ LossPoints ≥ 0` (FR-030, required when `Type = Custom`).
+- Standard: `WinPoints = 3, DrawPoints = 1, LossPoints = 0` (set by system).
+- WinnerTakesAll: `WinPoints = 3, DrawPoints = 0, LossPoints = 0` (set by system).
+- Immutable once tournament `Status` advances to `InProgress` (FR-032).
+
+---
+
+### TournamentRegistration
+
+| Field | Type | Constraints |
+|-------|------|-------------|
+| Id | `Guid` | PK |
+| TournamentId | `Guid` | FK → `Tournament.Id`, NOT NULL |
+| TeamId | `Guid` | FK → `Team.Id`, NOT NULL |
+| RegisteredAt | `DateTime` | NOT NULL, UTC |
+| Status | `RegistrationStatus` | NOT NULL, default `Active` |
+
+**DB Constraints**:
+- `UNIQUE(TournamentId, TeamId)`
 
 ---
 
 ### Match
 
-**Purpose**: Records a game between two teams in a tournament.
+| Field | Type | Constraints |
+|-------|------|-------------|
+| Id | `Guid` | PK |
+| TournamentId | `Guid` | FK → `Tournament.Id`, NOT NULL |
+| HomeTeamId | `Guid` | FK → `Team.Id`, NOT NULL |
+| AwayTeamId | `Guid` | FK → `Team.Id`, NOT NULL |
+| HomeScore | `int` | NOT NULL, ≥ 0 |
+| AwayScore | `int` | NOT NULL, ≥ 0 |
+| PlayedAt | `DateTime` | NOT NULL, UTC |
+| RecordedAt | `DateTime` | NOT NULL, UTC |
 
-**Attributes**:
-- `Id` (Guid, PK): Unique identifier
-- `TournamentId` (Guid, FK): Tournament context
-- `HomeTeamId` (Guid, FK): Home team
-- `AwayTeamId` (Guid, FK): Away team
-- `HomeScore` (int): Goals/points scored by home team
-- `AwayScore` (int): Goals/points scored by away team
-- `MatchDate` (DateTime): Match date/time
-- `CreatedAt` (DateTime): Result registration timestamp
+**DB Constraints**:
+- `HomeTeamId ≠ AwayTeamId` (CHECK constraint)
 
-**Validation Rules**:
-- HomeScore, AwayScore: >= 0
-- HomeTeamId != AwayTeamId
-- Both teams must be enrolled in tournament
-- Unique constraint: (TournamentId, HomeTeamId, AwayTeamId, MatchDate) prevents duplicate matches
-- Can only be registered by tournament organizer
-
-**Relationships**:
-- Many-to-One with Tournament
-- Many-to-One with Team (home team)
-- Many-to-One with Team (away team)
-
-**Indexes**:
-- Index on TournamentId
-- Index on HomeTeamId
-- Index on AwayTeamId
-- Unique composite index on (TournamentId, HomeTeamId, AwayTeamId, MatchDate)
-
-**Calculated Values** (not stored):
-- Winner: determined by HomeScore vs AwayScore
-- IsDraw: HomeScore == AwayScore
+**Service-Layer Constraints**:
+- Duplicate detection (FR-035): reject if a match already exists for the same `TournamentId` and the same two teams (regardless of home/away order) at the same `PlayedAt`.
 
 ---
 
-### Standings (Calculated View / Query Result)
+### Standing
 
-**Purpose**: Tournament leaderboard calculated from match results.
+| Field | Type | Constraints |
+|-------|------|-------------|
+| Id | `Guid` | PK |
+| TournamentId | `Guid` | FK → `Tournament.Id`, NOT NULL |
+| TeamId | `Guid` | FK → `Team.Id`, NOT NULL |
+| Points | `int` | NOT NULL, ≥ 0 |
+| MatchesPlayed | `int` | NOT NULL, ≥ 0 |
+| Wins | `int` | NOT NULL, ≥ 0 |
+| Draws | `int` | NOT NULL, ≥ 0 |
+| Losses | `int` | NOT NULL, ≥ 0 |
 
-**Attributes** (not persisted, calculated on demand):
-- `TournamentId` (Guid): Tournament context
-- `TeamId` (Guid): Team identifier
-- `TeamName` (string): Team name
-- `Position` (int): Rank (1-based, ordered by Points desc, then goal difference)
-- `Points` (int): Total points calculated by scoring system
-- `Played` (int): Total matches played (as home or away)
-- `Won` (int): Matches won
-- `Drawn` (int): Matches drawn
-- `Lost` (int): Matches lost
-- `GoalsFor` (int, optional): Total goals/points scored
-- `GoalsAgainst` (int, optional): Total goals/points conceded
-- `GoalDifference` (int, optional): GoalsFor - GoalsAgainst
+**DB Constraints**:
+- `UNIQUE(TournamentId, TeamId)`
 
-**Calculation Logic**:
-1. Query all matches for TournamentId
-2. For each team in tournament enrollment:
-   - Find all matches where TeamId = HomeTeamId OR TeamId = AwayTeamId
-   - For each match, determine result (win/draw/loss) from scores
-   - Apply tournament's IScoringSystem.CalculatePoints(result, side)
-   - Aggregate: sum points, count won/drawn/lost, sum goals
-3. Order by Points DESC, then GoalDifference DESC, then TeamName ASC
+**Lifecycle**: A `Standing` row is created (initialized to all zeros) when a team's `TournamentRegistration` becomes `Active`. It is updated — never deleted — when match results are recorded or corrected via full replay recalculation. If a team withdraws (`RegistrationStatus → Withdrawn`), its `Standing` row is deleted so it no longer appears in the standings table.
 
-**Not an Entity**: This is a read-only query result, not stored in database. Recalculated on every standings request after match result changes.
+**Notes**: Position (rank) is computed at query time by `ORDER BY Points DESC`; not stored. Teams with equal `Points` share the same ordinal rank — no secondary tiebreaker (FR-031).
 
 ---
 
-## Enumerations
+## Enums
 
-### UserRole
-- `Organizer` = 0
-- `Player` = 1
+```csharp
+// Domain/Enums/UserRole.cs
+enum UserRole { Player, Organizer, Admin }
 
-### TournamentState
-- `Draft` = 0 (only visible to organizer)
-- `Open` = 1 (teams can enroll)
-- `InProgress` = 2 (enrollments closed, matches being played)
-- `Finished` = 3 (tournament complete)
+// Domain/Enums/TournamentStatus.cs
+enum TournamentStatus { Draft, Open, InProgress, Completed, Suspended }
 
-### ScoringSystemType
-- `Standard` = 0 (3-1-0)
-- `WTA` = 1 (3-0-0)
-- `Custom` = 2 (organizer-defined)
+// Domain/Enums/ScoringSystemType.cs
+enum ScoringSystemType { Standard, WinnerTakesAll, Custom }
 
-### InvitationStatus
-- `Pending` = 0
-- `Accepted` = 1
-- `Rejected` = 2
+// Domain/Enums/InvitationStatus.cs
+enum InvitationStatus { Pending, Accepted, Declined, Expired }
+
+// Domain/Enums/RegistrationStatus.cs
+enum RegistrationStatus { Active, Withdrawn }
+```
+
+---
+
+## State Transition Diagrams
+
+### Tournament Status
+
+```
+[Draft] ──Organizer advance──► [Open] ──Organizer advance──► [InProgress] ──Organizer advance──► [Completed]
+   │                              │                               │
+   │◄──Admin suspends (saves pre-suspension state)               │
+   └──────────────────[Suspended]◄────────────────────────────────┘
+            │
+            └──Admin reinstates──► (restore PreSuspensionStatus)
+```
+
+- Forward transitions (Draft → Open → InProgress → Completed) are **unidirectional and forward-only** by the Organizer; states may be skipped.
+- `Suspended` is entered from any non-`Completed` state by Admin action only; exit is also by Admin only.
+- `PreSuspensionStatus` stores the state to restore on reinstatement.
+
+### Invitation Status
+
+```
+[Pending] ──Player accepts──► [Accepted]
+          ──Player declines──► [Declined]
+          ──7 days elapsed (lazy)──► [Expired]
+```
+
+---
+
+## Key Validation Rules Summary
+
+| Rule | Enforcement Point |
+|------|------------------|
+| `Tournament.StartDate > UtcNow` at creation | Service layer |
+| `Tournament.EstimatedEndDate > Tournament.StartDate` | Service layer |
+| `Tournament.MaxTeams ≥ 2` | Service layer |
+| `Tournament.MinMembersPerTeam ≥ 1` | Service layer |
+| `ScoringSystem.WinPoints ≥ DrawPoints ≥ LossPoints ≥ 0` (Custom) | Service layer |
+| Player cannot be Captain of > 1 team per game | Service layer |
+| Player cannot be active member of > 1 team per game | Service layer |
+| Tournament status transitions are forward-only (Organizer) | Service layer |
+| `ScoringSystem` immutable once `InProgress` | Service layer |
+| Registration only allowed when tournament is `Open` | Service layer |
+| Team `VideogameId` must match Tournament `VideogameId` | Service layer |
+| Duplicate match detection (ignoring home/away order) at same `PlayedAt` | Service layer |
+| Organizer may only modify their own tournament | Service layer (ownership check) |
+| Team name unique per `VideogameId` | DB constraint + service layer |
+| `TournamentRegistration` unique per `(TournamentId, TeamId)` | DB constraint + service layer |
 
 ---
 
 ## EF Core Configuration Notes
 
-### Table Per Hierarchy (TPH) for User Inheritance
-```csharp
-modelBuilder.Entity<User>()
-    .HasDiscriminator<UserRole>("Role")
-    .HasValue<Organizer>(UserRole.Organizer)
-    .HasValue<Player>(UserRole.Player);
-```
-
-### Cascade Delete Behavior
-- Tournament deleted → Matches deleted (cascade)
-- Tournament deleted → Enrollments deleted (cascade)
-- Team deleted → Enrollments deleted (cascade)
-- Team deleted → Invitations deleted (cascade)
-- Organizer deleted → Tournaments deleted (restrict - require manual cleanup)
-- Player deleted → Team memberships deleted (restrict - require captain reassignment)
-
-### Unique Constraints
-- User.Email (unique)
-- Organizer.OrganizationName (unique)
-- Player.Username (unique)
-- Team (Name, Game) composite unique
-- Match (TournamentId, HomeTeamId, AwayTeamId, MatchDate) composite unique
-
-### Value Objects (Consider for Future)
-- Email (with validation)
-- Password (with hashing)
-- Score (with min/max validation)
-
-Currently using primitive types for simplicity, can refactor to value objects if validation logic grows complex.
-
----
-
-## Migration Strategy
-
-1. **Initial Migration**: Create all tables, indexes, foreign keys
-2. **Seed Data**: Optional seed for development (sample organizer, players, teams)
-3. **Future Migrations**: Add fields, indexes, constraints as needed (track in git)
-
-**Command**:
-```bash
-dotnet ef migrations add InitialCreate --project EsportsPlatform.Infrastructure
-dotnet ef database update --project EsportsPlatform.API
-```
-
----
-
-## Summary
-
-**Total Tables**: 9 core entities + 2 join tables = 11 tables
-- User (with Organizer/Player TPH)
-- Tournament
-- Team
-- Match
-- TeamInvitation
-- TeamPlayer (join)
-- TournamentEnrollment (join)
-
-**Total Enums**: 4
-- UserRole, TournamentState, ScoringSystemType, InvitationStatus
-
-**Calculated Views**: 1
-- Standings (not persisted, query result)
-
-**Key Relationships**:
-- User → Organizer → Tournament (1:N)
-- User → Player → Team (M:N via TeamPlayer)
-- Player → Team (captain, 1:N)
-- Team → Tournament (M:N via TournamentEnrollment)
-- Tournament → Match (1:N)
-- Team → TeamInvitation (1:N)
-- Player → TeamInvitation (1:N)
-
-**All entities support spec requirements (FR-001 through FR-043). Ready for Phase 1 contract definitions.**
+- **Table-per-hierarchy (TPH)** for `User → Player / Organizer`: Use TPH with a discriminator column `UserType` (or split into separate tables using `Table-per-type (TPT)` if preferred for cleaner SQL queries — decide in implementation).
+- **Owned entity**: Consider `ScoringSystem` as an owned entity on `Tournament` to simplify the 1:1 relationship, or keep it as a separate table with `UNIQUE(TournamentId)`.
+- **Concurrency**: Use EF Core optimistic concurrency tokens on `Standing` rows to guard against race conditions during rapid result recording.

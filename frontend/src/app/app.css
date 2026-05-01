@@ -1,0 +1,38 @@
+/* App root shell */
+:host {
+  display: block;
+  min-height: 100vh;
+}
+
+/* Navbar brand pulse on hover */
+.brand {
+  position: relative;
+}
+
+.brand::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #6366f1, #06b6d4);
+  transition: width 0.3s ease;
+  border-radius: 1px;
+}
+
+.brand:hover::after {
+  width: 100%;
+}
+
+/* Active nav link indicator */
+.nav-links a.active,
+.nav-links a[aria-current='page'] {
+  color: #e2e8f0;
+  background: rgba(99, 102, 241, 0.15);
+}
+
+/* Main content wrapper */
+main {
+  min-height: calc(100vh - 64px);
+}
